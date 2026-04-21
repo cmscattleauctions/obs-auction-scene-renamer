@@ -1,27 +1,304 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>OBS Auction Scene Renamer</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>OBS Auction Scene Renamer</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 0 20px;
+      text-align: center;
+    }
+    .box {
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 24px;
+      margin-top: 20px;
+    }
+    button {
+      padding: 12px 18px;
+      font-size: 16px;
+      cursor: pointer;
+      margin-top: 20px;
+    }
+    #downloadLink {
+      display: none;
+      margin-top: 20px;
+      font-weight: bold;
+    }
+    #status {
+      margin-top: 20px;
+      white-space: pre-wrap;
+      text-align: left;
+      background: #f7f7f7;
+      border-radius: 8px;
+      padding: 12px;
+    }
+  </style>
 </head>
-<body style="font-family: Arial; text-align: center; margin-top: 50px;">
+<body>
+  <h1>OBS Auction Scene Renamer</h1>
 
-    <h1>OBS Auction Scene Renamer</h1>
+  <div class="box">
+    <p><strong>1.</strong> Upload OBS Scene Collection JSON</p>
+    <input type="file" id="obsFile" accept=".json" />
 
-    <p>Upload your OBS Scene Collection JSON:</p>
-    <input type="file" id="obsFile">
+    <p><strong>2.</strong> Upload Auction CSV</p>
+    <input type="file" id="csvFile" accept=".csv" />
 
-    <p>Upload your Lot CSV:</p>
-    <input type="file" id="csvFile">
+    <div>
+      <button id="generateBtn">Generate New Scene Collection</button>
+    </div>
 
-    <br><br>
+    <div>
+      <a id="downloadLink">Download Updated OBS File</a>
+    </div>
 
-    <button onclick="processFiles()">Generate New Scene Collection</button>
+    <div id="status">Waiting for files...</div>
+  </div>
 
-    <br><br>
+  <script>
+    document.getElementById("generateBtn").addEventListener("click", processFiles);
 
-    <a id="downloadLink" style="display:none;">Download Updated OBS File</a>
+    function setStatus(message) {
+      document.getElementById("status").textContent = message;
+    }
 
-    <script src="script.js"></script>
+    function processFiles() {
+      const obsFile = document.getElementById("obsFile").files[0];
+      const csvFile = document.getElementById("csvFile").files[0];
 
+      if (!obsFile || !csvFile) {
+        alert("Please upload both files.");
+        return;
+      }
+
+      setStatus("Reading files...");
+
+      const obsReader = new FileReader();
+      const csvReader = new FileReader();
+
+      obsReader.onload = function(obsEvent) {
+        csvReader.onload = function(csvEvent) {
+          try {
+            const obsData = JSON.parse(obsEvent.target.result);
+            const csvText = csvEvent.target.result;
+
+            setStatus("Parsing CSV...");
+            const lotNames = buildLotNamesFromCSV(csvText);
+
+            if (!lotNames.length) {
+              alert("No lot names found in the CSV.");
+              setStatus("No lot names found in the CSV.");
+              return;
+            }
+
+            setStatus("Found " + lotNames.length + " lot names. Renaming scenes...");
+
+            const lotSceneIndexes = [];
+            for (let i = 0; i < obsData.scene_order.length; i++) {
+              const sceneName = obsData.scene_order[i].name;
+              if (isLotScene(sceneName)) {
+                lotSceneIndexes.push(i);
+              }
+            }
+
+            const renameMap = new Map();
+            let lotIndex = 0;
+            let unusedIndex = 1;
+
+            for (let i = 0; i < lotSceneIndexes.length; i += 2) {
+              const firstIndex = lotSceneIndexes[i];
+              const secondIndex = lotSceneIndexes[i + 1];
+              if (secondIndex === undefined) break;
+
+              const firstOld = obsData.scene_order[firstIndex].name;
+              const secondOld = obsData.scene_order[secondIndex].name;
+
+              const firstIsTransition = firstOld.includes("Transition");
+              const secondIsTransition = secondOld.includes("Transition");
+
+              let transitionIndex, videoIndex, oldTransition, oldVideo;
+
+              if (firstIsTransition && !secondIsTransition) {
+                transitionIndex = firstIndex;
+                videoIndex = secondIndex;
+                oldTransition = firstOld;
+                oldVideo = secondOld;
+              } else if (!firstIsTransition && secondIsTransition) {
+                transitionIndex = secondIndex;
+                videoIndex = firstIndex;
+                oldTransition = secondOld;
+                oldVideo = firstOld;
+              } else {
+                continue;
+              }
+
+              let newTransition, newVideo;
+
+              if (lotIndex < lotNames.length) {
+                const base = lotNames[lotIndex];
+                newTransition = base + " Transition";
+                newVideo = base + " Video";
+                lotIndex++;
+              } else {
+                const padded = String(unusedIndex).padStart(3, "0");
+                newTransition = "UNUSED " + padded + " Transition";
+                newVideo = "UNUSED " + padded + " Video";
+                unusedIndex++;
+              }
+
+              obsData.scene_order[transitionIndex].name = newTransition;
+              obsData.scene_order[videoIndex].name = newVideo;
+
+              renameMap.set(oldTransition, newTransition);
+              renameMap.set(oldVideo, newVideo);
+            }
+
+            if (Array.isArray(obsData.sources)) {
+              for (const source of obsData.sources) {
+                const sourceName = normalizeSceneName(source.name);
+                for (const [oldName, newName] of renameMap.entries()) {
+                  if (normalizeSceneName(oldName) === sourceName) {
+                    source.name = newName;
+                    break;
+                  }
+                }
+              }
+            }
+
+            if (typeof obsData.current_scene === "string") {
+              for (const [oldName, newName] of renameMap.entries()) {
+                if (normalizeSceneName(obsData.current_scene) === normalizeSceneName(oldName)) {
+                  obsData.current_scene = newName;
+                  break;
+                }
+              }
+            }
+
+            if (typeof obsData.current_program_scene === "string") {
+              for (const [oldName, newName] of renameMap.entries()) {
+                if (normalizeSceneName(obsData.current_program_scene) === normalizeSceneName(oldName)) {
+                  obsData.current_program_scene = newName;
+                  break;
+                }
+              }
+            }
+
+            downloadJSON(obsData, "updated_scene_collection.json");
+            setStatus(
+              "Done.\n" +
+              "Lot names found: " + lotNames.length + "\n" +
+              "Lot scene slots found: " + lotSceneIndexes.length + "\n" +
+              "You can now click the download link."
+            );
+          } catch (error) {
+            console.error(error);
+            alert("Error: " + error.message);
+            setStatus("Error: " + error.message);
+          }
+        };
+
+        csvReader.readAsText(csvFile);
+      };
+
+      obsReader.readAsText(obsFile);
+    }
+
+    function buildLotNamesFromCSV(csvText) {
+      const lines = csvText
+        .split(/\r?\n/)
+        .filter(line => line.trim() !== "");
+
+      if (lines.length < 2) return [];
+
+      const headers = splitCSVLine(lines[0]).map(h => cleanCell(h));
+      const lotIndex = headers.findIndex(h => h.toLowerCase() === "lot number");
+
+      if (lotIndex === -1) {
+        throw new Error('Could not find "Lot Number" column in CSV.');
+      }
+
+      const result = [];
+
+      for (let i = 1; i < lines.length; i++) {
+        const cols = splitCSVLine(lines[i]);
+        let rawLot = cleanCell(cols[lotIndex] || "");
+
+        if (!rawLot) continue;
+
+        rawLot = normalizeLot(rawLot);
+        result.push(rawLot);
+      }
+
+      return result;
+    }
+
+    function splitCSVLine(line) {
+      const result = [];
+      let current = "";
+      let inQuotes = false;
+
+      for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        const next = line[i + 1];
+
+        if (char === '"') {
+          if (inQuotes && next === '"') {
+            current += '"';
+            i++;
+          } else {
+            inQuotes = !inQuotes;
+          }
+        } else if (char === "," && !inQuotes) {
+          result.push(current);
+          current = "";
+        } else {
+          current += char;
+        }
+      }
+
+      result.push(current);
+      return result;
+    }
+
+    function cleanCell(value) {
+      return String(value).trim().replace(/^"|"$/g, "");
+    }
+
+    function normalizeLot(rawLot) {
+      const lot = rawLot.replace(/\s+/g, "").toUpperCase();
+      const match = lot.match(/^(\d+)([A-Z])$/);
+      if (match) {
+        return match[1] + "-" + match[2];
+      }
+      return lot;
+    }
+
+    function normalizeSceneName(name) {
+      return String(name).replace(/\s+/g, " ").trim();
+    }
+
+    function isLotScene(name) {
+      const cleaned = normalizeSceneName(name);
+      return /^\d+(-[A-Z])? (Transition|Video)$/.test(cleaned);
+    }
+
+    function downloadJSON(data, filename) {
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: "application/json"
+      });
+
+      const url = URL.createObjectURL(blob);
+      const link = document.getElementById("downloadLink");
+      link.href = url;
+      link.download = filename;
+      link.style.display = "inline-block";
+      link.textContent = "Download Updated OBS File";
+    }
+  </script>
 </body>
 </html>
