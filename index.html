@@ -90,29 +90,20 @@
         setStatus("Reading CSV...");
         const csvText = await readFileAsText(csvFile);
 
-        setStatus("Parsing CSV...");
-        const parsed = parseCSVRows(csvText);
-        const rows = parsed.rows;
-        if (!rows.length) {
-          throw new Error("No usable rows found in CSV.");
+        setStatus("Parsing column B...");
+        const tokens = parseColumnB(csvText);
+        if (!tokens.length) {
+          throw new Error("No usable values found in column B.");
         }
 
-        setStatus(
-          "Building scene collection...\n" +
-          "Type column used: " + parsed.typeSource + "\n" +
-          "Sample parsed type values:\n" +
-          parsed.sampleTypes.join("\n")
-        );
-
-        const output = buildFromTemplate(templateData, rows);
+        setStatus("Building scene collection...");
+        const output = buildFromTemplate(templateData, tokens);
 
         downloadJSON(output, "updated_scene_collection.json");
         setStatus(
           "Done.\n" +
-          "Rows found: " + rows.length + "\n" +
-          "Type column used: " + parsed.typeSource + "\n" +
-          "Sample parsed type values:\n" +
-          parsed.sampleTypes.join("\n")
+          "Entries found in column B: " + tokens.length + "\n" +
+          "Breed markers and lots were read directly from column B."
         );
       } catch (error) {
         console.error(error);
@@ -165,71 +156,71 @@
         .replace(/^"|"$/g, "");
     }
 
-    function normalizeLot(rawLot) {
-      const lot = rawLot.replace(/\s+/g, "").toUpperCase();
-      const match = lot.match(/^(\d+)([A-Z])$/);
-      if (match) {
-        return match[1] + "-" + match[2];
-      }
-      return lot;
-    }
-
-    function normalizeTypeText(value) {
-      return cleanCell(value)
-        .replace(/\s+/g, " ")
-        .trim()
-        .toLowerCase();
-    }
-
-    function parseCSVRows(csvText) {
-      const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== "");
-      if (lines.length < 2) return { rows: [], sampleTypes: [], typeSource: "none" };
-
-      const headers = splitCSVLine(lines[0]).map(h => cleanCell(h));
-      const lotIndex = headers.findIndex(h => h.toLowerCase() === "lot number");
-      const headerTypeIndex = headers.findIndex(h => h.toLowerCase() === "type");
-
-      if (lotIndex === -1) {
-        throw new Error('Could not find "Lot Number" column.');
-      }
-
-      const rowsUsingHeader = [];
-      const rowsUsingColumnB = [];
-
-      for (let i = 1; i < lines.length; i++) {
-        const cols = splitCSVLine(lines[i]);
-        const lot = normalizeLot(cleanCell(cols[lotIndex] || ""));
-        if (!lot) continue;
-
-        const headerType = headerTypeIndex >= 0 ? cleanCell(cols[headerTypeIndex] || "") : "";
-        const columnBType = cleanCell(cols[1] || "");
-
-        rowsUsingHeader.push({ lot, type: headerType });
-        rowsUsingColumnB.push({ lot, type: columnBType });
-      }
-
-      const score = rows => rows.filter(r => {
-        const t = normalizeTypeText(r.type);
-        return t === "char x" || t === "natives" || t === "holstein steers";
-      }).length;
-
-      const headerScore = score(rowsUsingHeader);
-      const columnBScore = score(rowsUsingColumnB);
-
-      const useHeader = headerScore >= columnBScore && headerTypeIndex >= 0;
-      const rows = useHeader ? rowsUsingHeader : rowsUsingColumnB;
-
-      const uniqueTypes = [...new Set(rows.map(r => cleanCell(r.type)).filter(Boolean))].slice(0, 12);
-
-      return {
-        rows,
-        sampleTypes: uniqueTypes.length ? uniqueTypes : ["(no type values found)"],
-        typeSource: useHeader ? 'header "Type"' : "column B"
-      };
-    }
-
     function normalizeSceneName(name) {
       return String(name).replace(/\s+/g, " ").trim();
+    }
+
+    function normalizeLot(rawLot) {
+      const value = cleanCell(rawLot).replace(/\s+/g, "").toUpperCase();
+
+      const dashed = value.match(/^(\d+)-([A-Z])$/);
+      if (dashed) {
+        return dashed[1] + "-" + dashed[2];
+      }
+
+      const undashed = value.match(/^(\d+)([A-Z])$/);
+      if (undashed) {
+        return undashed[1] + "-" + undashed[2];
+      }
+
+      const plain = value.match(/^\d+$/);
+      if (plain) {
+        return value;
+      }
+
+      return null;
+    }
+
+    function getBreedTransitionName(value) {
+      const t = cleanCell(value).toLowerCase();
+
+      if (t === "char x" || t === "charx") return "Charloais Transition";
+      if (t === "natives") return "Native Transition";
+      if (t === "holstein steers") return "Hosltein Transition";
+
+      return null;
+    }
+
+    function parseColumnB(csvText) {
+      const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== "");
+      const tokens = [];
+
+      for (let i = 0; i < lines.length; i++) {
+        const cols = splitCSVLine(lines[i]);
+
+        // Column B = index 1
+        const cell = cleanCell(cols[1] || "");
+        if (!cell) continue;
+
+        const breedScene = getBreedTransitionName(cell);
+        if (breedScene) {
+          tokens.push({
+            kind: "breed_transition",
+            name: breedScene
+          });
+          continue;
+        }
+
+        const lot = normalizeLot(cell);
+        if (lot) {
+          tokens.push({
+            kind: "lot",
+            lot
+          });
+        }
+      }
+
+      return tokens;
     }
 
     function isLotTransitionScene(name) {
@@ -263,67 +254,58 @@
       return map;
     }
 
-    function getBreedKey(typeValue) {
-      const t = normalizeTypeText(typeValue);
-
-      if (t === "char x") return "char";
-      if (t === "natives") return "native";
-      if (t === "holstein steers") return "holstein";
-
-      return "black";
-    }
-
-    function getBreedTransition(breedKey) {
-      if (breedKey === "char") return "Charloais Transition";
-      if (breedKey === "native") return "Native Transition";
-      if (breedKey === "holstein") return "Hosltein Transition";
-      return null;
-    }
-
-    function groupRows(rows) {
+    function groupTokens(tokens) {
       const groups = [];
       let i = 0;
 
-      while (i < rows.length) {
-        const row = rows[i];
+      while (i < tokens.length) {
+        const token = tokens[i];
 
-        if (!isOptionLot(row.lot)) {
+        if (token.kind === "breed_transition") {
+          groups.push(token);
+          i++;
+          continue;
+        }
+
+        if (token.kind !== "lot") {
+          i++;
+          continue;
+        }
+
+        if (!isOptionLot(token.lot)) {
           groups.push({
-            kind: "single",
-            type: row.type,
-            rows: [row]
+            kind: "single_lot",
+            rows: [token]
           });
           i++;
           continue;
         }
 
-        const base = getOptionBase(row.lot);
-        const type = row.type;
-        const optionRows = [row];
+        const base = getOptionBase(token.lot);
+        const optionRows = [token];
         let j = i + 1;
 
-        while (j < rows.length) {
-          const next = rows[j];
-          if (isOptionLot(next.lot) && getOptionBase(next.lot) === base && next.type === type) {
-            optionRows.push(next);
-            j++;
-          } else {
-            break;
-          }
+        while (j < tokens.length) {
+          const next = tokens[j];
+
+          if (next.kind !== "lot") break;
+          if (!isOptionLot(next.lot)) break;
+          if (getOptionBase(next.lot) !== base) break;
+
+          optionRows.push(next);
+          j++;
         }
 
         if (optionRows.length >= 2) {
           groups.push({
             kind: "option_group",
-            type,
             rows: optionRows
           });
           i = j;
         } else {
           groups.push({
-            kind: "single",
-            type: row.type,
-            rows: [row]
+            kind: "single_lot",
+            rows: [token]
           });
           i++;
         }
@@ -332,7 +314,7 @@
       return groups;
     }
 
-    function buildFromTemplate(templateData, rows) {
+    function buildFromTemplate(templateData, tokens) {
       const sourceMap = getSourceMap(templateData);
       const originalSceneNames = (templateData.scene_order || []).map(s => s.name);
 
@@ -372,23 +354,17 @@
         throw new Error("Could not find lot Transition/Video scenes in template.json.");
       }
 
-      const groups = groupRows(rows);
+      const groups = groupTokens(tokens);
       const finalSceneNames = [...fixedStartScenes];
 
-      let currentBreed = "black";
       let previousWasOptionGroup = false;
       let interludePtr = 0;
 
       for (const group of groups) {
-        const breedKey = getBreedKey(group.type);
-        const breedTransition = getBreedTransition(breedKey);
-
-        if (breedKey !== currentBreed) {
-          if (breedTransition) {
-            finalSceneNames.push(breedTransition);
-          }
-          currentBreed = breedKey;
+        if (group.kind === "breed_transition") {
+          finalSceneNames.push(group.name);
           previousWasOptionGroup = false;
+          continue;
         }
 
         if (group.kind === "option_group") {
@@ -410,7 +386,10 @@
           finalSceneNames.push(optionInterludePool[interludePtr++]);
 
           previousWasOptionGroup = true;
-        } else {
+          continue;
+        }
+
+        if (group.kind === "single_lot") {
           for (const row of group.rows) {
             finalSceneNames.push(row.lot + " Transition");
             finalSceneNames.push(row.lot + " Video");
