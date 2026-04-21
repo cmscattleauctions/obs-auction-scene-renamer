@@ -163,20 +163,51 @@
     }
 
     function normalizeLot(rawLot) {
-      const lot = cleanCell(rawLot).replace(/\s+/g, "").toUpperCase();
+      let lot = cleanCell(rawLot).toUpperCase();
 
-      const dashed = lot.match(/^(\d+)-([A-Z])$/);
-      if (dashed) {
-        return dashed[1] + "-" + dashed[2];
+      // Remove common junk but keep enough structure to rescue the lot number
+      lot = lot.replace(/\s+/g, "");
+      lot = lot.replace(/,/g, "");
+      lot = lot.replace(/_/g, "-");
+
+      // Excel-style formatting like 210.0
+      if (/^\d+\.0+$/.test(lot)) {
+        lot = lot.replace(/\.0+$/, "");
       }
 
-      const undashed = lot.match(/^(\d+)([A-Z])$/);
-      if (undashed) {
-        return undashed[1] + "-" + undashed[2];
+      // Strip periods after cleaning, so 217.A or 217.A. becomes 217A
+      lot = lot.replace(/\./g, "");
+
+      // Standard cases
+      let match = lot.match(/^(\d+)-([A-Z])$/);
+      if (match) {
+        return match[1] + "-" + match[2];
       }
 
-      if (/^\d+$/.test(lot)) {
-        return lot;
+      match = lot.match(/^(\d+)([A-Z])$/);
+      if (match) {
+        return match[1] + "-" + match[2];
+      }
+
+      match = lot.match(/^(\d+)$/);
+      if (match) {
+        return match[1];
+      }
+
+      // Rescue from messy cells
+      match = lot.match(/(\d+)-([A-Z])/);
+      if (match) {
+        return match[1] + "-" + match[2];
+      }
+
+      match = lot.match(/(\d+)([A-Z])/);
+      if (match) {
+        return match[1] + "-" + match[2];
+      }
+
+      match = lot.match(/(\d+)/);
+      if (match) {
+        return match[1];
       }
 
       return null;
