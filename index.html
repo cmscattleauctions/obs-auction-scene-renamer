@@ -105,7 +105,7 @@
           "Entries found: " + tokens.length + "\n" +
           "Breed markers are read from column B.\n" +
           "Lots are read from the Lot Number column.\n" +
-          "If the template runs out of lot scenes, the last transition/video templates are automatically reused."
+          "Overflow lot scenes reuse the last template scene if needed."
         );
       } catch (error) {
         console.error(error);
@@ -165,20 +165,24 @@
     function normalizeLot(rawLot) {
       let lot = cleanCell(rawLot).toUpperCase();
 
-      // Remove common junk but keep enough structure to rescue the lot number
+      if (!lot) return null;
+
       lot = lot.replace(/\s+/g, "");
       lot = lot.replace(/,/g, "");
       lot = lot.replace(/_/g, "-");
 
-      // Excel-style formatting like 210.0
+      // plain integer formatted by Excel like 210.0
       if (/^\d+\.0+$/.test(lot)) {
         lot = lot.replace(/\.0+$/, "");
       }
 
-      // Strip periods after cleaning, so 217.A or 217.A. becomes 217A
+      // strip periods only after handling x.0 style
       lot = lot.replace(/\./g, "");
 
-      // Standard cases
+      // Accept ONLY these exact lot formats:
+      // 201
+      // 217A
+      // 217-A
       let match = lot.match(/^(\d+)-([A-Z])$/);
       if (match) {
         return match[1] + "-" + match[2];
@@ -191,22 +195,8 @@
 
       match = lot.match(/^(\d+)$/);
       if (match) {
-        return match[1];
-      }
-
-      // Rescue from messy cells
-      match = lot.match(/(\d+)-([A-Z])/);
-      if (match) {
-        return match[1] + "-" + match[2];
-      }
-
-      match = lot.match(/(\d+)([A-Z])/);
-      if (match) {
-        return match[1] + "-" + match[2];
-      }
-
-      match = lot.match(/(\d+)/);
-      if (match) {
+        // reject zero as a fake lot
+        if (match[1] === "0") return null;
         return match[1];
       }
 
@@ -253,7 +243,7 @@
           }
         }
 
-        // Lots come from Lot Number column
+        // Lots come only from Lot Number column
         const rawLot = cleanCell(cols[lotIndex] || "");
         const lot = normalizeLot(rawLot);
 
