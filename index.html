@@ -221,54 +221,24 @@
       return map;
     }
 
-    function normalizeBreedType(typeValue) {
-      const raw = String(typeValue || "").toLowerCase().trim();
-      const t = raw.replace(/[^a-z0-9]+/g, " ");
+    function getBreedTransitionFromType(typeValue) {
+      const t = String(typeValue || "").trim().toLowerCase();
 
-      if (
-        t.includes("charolais") ||
-        t.includes("charloais") ||
-        t.includes("char x") ||
-        t.includes("charolais x") ||
-        (t.includes("char") && t.includes("beef"))
-      ) {
-        return "charolais";
-      }
+      if (t === "char x") return "Charloais Transition";
+      if (t === "natives") return "Native Transition";
+      if (t === "holstein steers") return "Hosltein Transition";
 
-      if (
-        t.includes("holstein") ||
-        t.includes("holstien") ||
-        t.includes("hol x") ||
-        t.includes("holstein x")
-      ) {
-        return "holstein";
-      }
-
-      if (
-        t.includes("native") ||
-        t.includes("natives")
-      ) {
-        return "native";
-      }
-
-      if (
-        t.includes("black") ||
-        t.includes("black x") ||
-        t.includes("beef on dairy") ||
-        t.includes("beed on dairy") ||
-        t.includes("bxd")
-      ) {
-        return "black";
-      }
-
-      return raw;
+      return null;
     }
 
-    function getBreedTransitionForKey(breedKey) {
-      if (breedKey === "charolais") return "Charloais Transition";
-      if (breedKey === "native") return "Native Transition";
-      if (breedKey === "holstein") return "Hosltein Transition";
-      return null;
+    function getBreedKeyFromType(typeValue) {
+      const t = String(typeValue || "").trim().toLowerCase();
+
+      if (t === "char x") return "char_x";
+      if (t === "natives") return "natives";
+      if (t === "holstein steers") return "holstein_steers";
+
+      return "black_x_beef_on_dairy";
     }
 
     function groupRows(rows) {
@@ -366,21 +336,19 @@
       const groups = groupRows(rows);
       const finalSceneNames = [...fixedStartScenes];
 
-      let currentBreedKey = null;
-      let firstBreedSection = true;
+      let currentBreedKey = "black_x_beef_on_dairy";
       let previousWasOptionGroup = false;
       let interludePtr = 0;
 
       for (const group of groups) {
-        const breedKey = normalizeBreedType(group.type);
-        const breedTransition = getBreedTransitionForKey(breedKey);
+        const groupBreedKey = getBreedKeyFromType(group.type);
+        const breedTransition = getBreedTransitionFromType(group.type);
 
-        if (breedKey !== currentBreedKey) {
-          if (!firstBreedSection && breedTransition) {
+        if (groupBreedKey !== currentBreedKey) {
+          if (breedTransition) {
             finalSceneNames.push(breedTransition);
           }
-          currentBreedKey = breedKey;
-          firstBreedSection = false;
+          currentBreedKey = groupBreedKey;
           previousWasOptionGroup = false;
         }
 
