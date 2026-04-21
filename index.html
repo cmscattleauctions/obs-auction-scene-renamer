@@ -91,19 +91,28 @@
         const csvText = await readFileAsText(csvFile);
 
         setStatus("Parsing CSV...");
-        const rows = parseCSVRows(csvText);
+        const parsed = parseCSVRows(csvText);
+        const rows = parsed.rows;
         if (!rows.length) {
           throw new Error("No usable rows found in CSV.");
         }
 
-        setStatus("Building scene collection...");
+        setStatus(
+          "Building scene collection...\n" +
+          "Type column used: " + parsed.typeSource + "\n" +
+          "Sample parsed type values:\n" +
+          parsed.sampleTypes.join("\n")
+        );
+
         const output = buildFromTemplate(templateData, rows);
 
         downloadJSON(output, "updated_scene_collection.json");
         setStatus(
           "Done.\n" +
           "Rows found: " + rows.length + "\n" +
-          "Scene collection generated successfully."
+          "Type column used: " + parsed.typeSource + "\n" +
+          "Sample parsed type values:\n" +
+          parsed.sampleTypes.join("\n")
         );
       } catch (error) {
         console.error(error);
@@ -150,7 +159,10 @@
     }
 
     function cleanCell(value) {
-      return String(value || "").trim().replace(/^"|"$/g, "");
+      return String(value || "")
+        .replace(/^\uFEFF/, "")
+        .trim()
+        .replace(/^"|"$/g, "");
     }
 
     function normalizeLot(rawLot) {
@@ -162,35 +174,58 @@
       return lot;
     }
 
+    function normalizeTypeText(value) {
+      return cleanCell(value)
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+    }
+
     function parseCSVRows(csvText) {
       const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== "");
-      if (lines.length < 2) return [];
+      if (lines.length < 2) return { rows: [], sampleTypes: [], typeSource: "none" };
 
       const headers = splitCSVLine(lines[0]).map(h => cleanCell(h));
       const lotIndex = headers.findIndex(h => h.toLowerCase() === "lot number");
+      const headerTypeIndex = headers.findIndex(h => h.toLowerCase() === "type");
 
       if (lotIndex === -1) {
         throw new Error('Could not find "Lot Number" column.');
       }
 
-      // Column B = index 1, per your instructions
-      const typeIndex = 1;
+      const rowsUsingHeader = [];
+      const rowsUsingColumnB = [];
 
-      const rows = [];
       for (let i = 1; i < lines.length; i++) {
         const cols = splitCSVLine(lines[i]);
         const lot = normalizeLot(cleanCell(cols[lotIndex] || ""));
-        const type = cleanCell(cols[typeIndex] || "");
-
         if (!lot) continue;
 
-        rows.push({
-          lot,
-          type
-        });
+        const headerType = headerTypeIndex >= 0 ? cleanCell(cols[headerTypeIndex] || "") : "";
+        const columnBType = cleanCell(cols[1] || "");
+
+        rowsUsingHeader.push({ lot, type: headerType });
+        rowsUsingColumnB.push({ lot, type: columnBType });
       }
 
-      return rows;
+      const score = rows => rows.filter(r => {
+        const t = normalizeTypeText(r.type);
+        return t === "char x" || t === "natives" || t === "holstein steers";
+      }).length;
+
+      const headerScore = score(rowsUsingHeader);
+      const columnBScore = score(rowsUsingColumnB);
+
+      const useHeader = headerScore >= columnBScore && headerTypeIndex >= 0;
+      const rows = useHeader ? rowsUsingHeader : rowsUsingColumnB;
+
+      const uniqueTypes = [...new Set(rows.map(r => cleanCell(r.type)).filter(Boolean))].slice(0, 12);
+
+      return {
+        rows,
+        sampleTypes: uniqueTypes.length ? uniqueTypes : ["(no type values found)"],
+        typeSource: useHeader ? 'header "Type"' : "column B"
+      };
     }
 
     function normalizeSceneName(name) {
@@ -229,11 +264,11 @@
     }
 
     function getBreedKey(typeValue) {
-      const t = cleanCell(typeValue);
+      const t = normalizeTypeText(typeValue);
 
-      if (t === "Char X") return "char";
-      if (t === "Natives") return "native";
-      if (t === "Holstein Steers") return "holstein";
+      if (t === "char x") return "char";
+      if (t === "natives") return "native";
+      if (t === "holstein steers") return "holstein";
 
       return "black";
     }
