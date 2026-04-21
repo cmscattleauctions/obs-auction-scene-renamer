@@ -98,7 +98,7 @@
 
         setStatus(
           "Building scene collection...\n" +
-          "Lot source counts:\n" +
+          "Entries found: " + parsed.tokens.length + "\n" +
           "Lot Number column: " + parsed.stats.lotHeader + "\n" +
           "Breed markers: " + parsed.stats.breedMarkers + "\n" +
           "Rejected as zero/junk: " + parsed.stats.rejected
@@ -110,7 +110,6 @@
         setStatus(
           "Done.\n" +
           "Entries found: " + parsed.tokens.length + "\n" +
-          "Lot source counts:\n" +
           "Lot Number column: " + parsed.stats.lotHeader + "\n" +
           "Breed markers: " + parsed.stats.breedMarkers + "\n" +
           "Rejected as zero/junk: " + parsed.stats.rejected + "\n" +
@@ -163,6 +162,9 @@
     function cleanCell(value) {
       return String(value || "")
         .replace(/^\uFEFF/, "")
+        .replace(/\u00A0/g, " ")
+        .replace(/\u2007/g, " ")
+        .replace(/\u202F/g, " ")
         .trim()
         .replace(/^"|"$/g, "");
     }
@@ -182,42 +184,49 @@
     }
 
     function normalizeLot(rawLot) {
-      let lot = cleanCell(rawLot).toUpperCase();
+      let lot = cleanCell(rawLot);
       if (!lot) return null;
 
-      lot = lot.replace(/\s+/g, "");
-      lot = lot.replace(/,/g, "");
-      lot = lot.replace(/_/g, "-");
+      // Remove leading apostrophes Excel sometimes uses for text cells
+      lot = lot.replace(/^'+/, "");
 
+      // Normalize unicode dashes
+      lot = lot.replace(/[–—−]/g, "-");
+
+      // Collapse spaces
+      lot = lot.replace(/\s+/g, " ").trim();
+
+      // Ignore dotted long code strings like 1.3.2.1.400
+      if (/\d+\.\d+\.\d+\.\d+/.test(lot)) {
+        return null;
+      }
+
+      // Remove commas and surrounding spaces
+      lot = lot.replace(/,/g, "").trim();
+
+      // Handle Excel numeric like 210.0
       if (/^\d+\.0+$/.test(lot)) {
         lot = lot.replace(/\.0+$/, "");
       }
 
-      lot = lot.replace(/\./g, "");
+      // Accept only:
+      // 210
+      // 210A
+      // 210-A
+      // 210 A
+      const match = lot.match(/^(\d+)\s*[- ]?\s*([A-Za-z])?$/);
+      if (!match) return null;
 
-      let match = lot.match(/^(\d+)-([A-Z])$/);
-      if (match) {
-        if (match[1] === "0") return null;
-        return match[1] + "-" + match[2];
-      }
+      const num = match[1];
+      const suffix = match[2] ? match[2].toUpperCase() : "";
 
-      match = lot.match(/^(\d+)([A-Z])$/);
-      if (match) {
-        if (match[1] === "0") return null;
-        return match[1] + "-" + match[2];
-      }
+      if (!num || num === "0") return null;
 
-      match = lot.match(/^(\d+)$/);
-      if (match) {
-        if (match[1] === "0") return null;
-        return match[1];
-      }
-
-      return null;
+      return suffix ? `${num}-${suffix}` : num;
     }
 
     function chooseLotValue(cols, lotIndex) {
-      const fromLotHeader = lotIndex >= 0 ? cleanCell(cols[lotIndex] || "") : "";
+      const fromLotHeader = lotIndex >= 0 ? cols[lotIndex] || "" : "";
       const lotFromHeader = normalizeLot(fromLotHeader);
 
       if (lotFromHeader) {
@@ -238,6 +247,10 @@
 
       const headers = splitCSVLine(lines[0]).map(h => cleanCell(h));
       const lotIndex = headers.findIndex(h => h.toLowerCase() === "lot number");
+
+      if (lotIndex === -1) {
+        throw new Error('Could not find "Lot Number" column.');
+      }
 
       const tokens = [];
       const stats = {
@@ -269,19 +282,16 @@
 
         if (chosen.lot) {
           const lastToken = tokens[tokens.length - 1];
-
           if (!(lastToken && lastToken.kind === "lot" && lastToken.lot === chosen.lot)) {
             tokens.push({
               kind: "lot",
               lot: chosen.lot
             });
-
-            if (chosen.source === "lotHeader") stats.lotHeader++;
+            stats.lotHeader++;
           }
         } else {
           const rawLotHeader = lotIndex >= 0 ? cleanCell(cols[lotIndex] || "") : "";
-          const rawB = cleanCell(cols[1] || "");
-          if (rawLotHeader === "0" || rawB === "0" || rawLotHeader === "0.0" || rawB === "0.0") {
+          if (rawLotHeader === "0" || rawLotHeader === "0.0") {
             stats.rejected++;
           }
         }
