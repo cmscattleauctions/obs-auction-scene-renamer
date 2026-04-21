@@ -330,6 +330,7 @@
 
       let currentBreed = null;
       let firstBreedSection = true;
+      let previousWasOptionGroup = false;
 
       for (const group of groups) {
         const breedTransition = getBreedTransitionName(group.type);
@@ -340,39 +341,68 @@
           }
           currentBreed = breedTransition;
           firstBreedSection = false;
+          previousWasOptionGroup = false;
         }
 
         if (group.kind === "option_group") {
+          if (!previousWasOptionGroup) {
+            if (interludePtr >= optionInterludePool.length) {
+              throw new Error("Not enough Option Lot Interlude scenes in template.json.");
+            }
+            finalSceneNames.push(optionInterludePool[interludePtr++]);
+          }
+
+          for (const row of group.rows) {
+            finalSceneNames.push(row.lot + " Transition");
+            finalSceneNames.push(row.lot + " Video");
+          }
+
           if (interludePtr >= optionInterludePool.length) {
             throw new Error("Not enough Option Lot Interlude scenes in template.json.");
           }
           finalSceneNames.push(optionInterludePool[interludePtr++]);
-        }
 
-        for (const row of group.rows) {
-          finalSceneNames.push(row.lot + " Transition");
-          finalSceneNames.push(row.lot + " Video");
-        }
-
-        if (group.kind === "option_group") {
-          if (interludePtr >= optionInterludePool.length) {
-            throw new Error("Not enough Option Lot Interlude scenes in template.json.");
+          previousWasOptionGroup = true;
+        } else {
+          for (const row of group.rows) {
+            finalSceneNames.push(row.lot + " Transition");
+            finalSceneNames.push(row.lot + " Video");
           }
-          finalSceneNames.push(optionInterludePool[interludePtr++]);
+          previousWasOptionGroup = false;
         }
       }
 
-      finalSceneNames.push(...fixedEndScenes);
+      const finalCompressed = [];
+      for (let i = 0; i < finalSceneNames.length; i++) {
+        const current = finalSceneNames[i];
+        const prev = finalCompressed[finalCompressed.length - 1];
+
+        const currentIsInterlude = normalizeSceneName(current).startsWith("Option Lot Interlude");
+        const prevIsInterlude = prev && normalizeSceneName(prev).startsWith("Option Lot Interlude");
+
+        if (currentIsInterlude && prevIsInterlude) {
+          continue;
+        }
+
+        finalCompressed.push(current);
+      }
+
+      finalCompressed.push(...fixedEndScenes);
 
       const newSceneOrder = [];
       const newSceneSources = [];
       const usedExactSceneNames = new Set();
 
-      for (const targetName of finalSceneNames) {
+      for (const targetName of finalCompressed) {
         let templateSceneName = null;
         const normalizedTarget = normalizeSceneName(targetName);
 
-        if (fixedStartScenes.includes(targetName) || fixedEndScenes.includes(targetName) || breedTransitionScenes.includes(targetName) || normalizedTarget.startsWith("Option Lot Interlude")) {
+        if (
+          fixedStartScenes.includes(targetName) ||
+          fixedEndScenes.includes(targetName) ||
+          breedTransitionScenes.includes(targetName) ||
+          normalizedTarget.startsWith("Option Lot Interlude")
+        ) {
           templateSceneName = targetName;
         } else if (isLotTransitionScene(targetName)) {
           if (transitionPtr >= lotTransitionPool.length) {
