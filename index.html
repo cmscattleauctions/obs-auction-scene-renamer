@@ -100,7 +100,6 @@
           "Building scene collection...\n" +
           "Lot source counts:\n" +
           "Lot Number column: " + parsed.stats.lotHeader + "\n" +
-          "Column B fallback: " + parsed.stats.columnB + "\n" +
           "Breed markers: " + parsed.stats.breedMarkers + "\n" +
           "Rejected as zero/junk: " + parsed.stats.rejected
         );
@@ -113,7 +112,6 @@
           "Entries found: " + parsed.tokens.length + "\n" +
           "Lot source counts:\n" +
           "Lot Number column: " + parsed.stats.lotHeader + "\n" +
-          "Column B fallback: " + parsed.stats.columnB + "\n" +
           "Breed markers: " + parsed.stats.breedMarkers + "\n" +
           "Rejected as zero/junk: " + parsed.stats.rejected + "\n" +
           "Overflow lot scenes reuse the last template scene if needed."
@@ -220,20 +218,10 @@
 
     function chooseLotValue(cols, lotIndex) {
       const fromLotHeader = lotIndex >= 0 ? cleanCell(cols[lotIndex] || "") : "";
-      const fromColumnB = cleanCell(cols[1] || "");
-
-      const breedMarker = getBreedTransitionName(fromColumnB);
-
       const lotFromHeader = normalizeLot(fromLotHeader);
+
       if (lotFromHeader) {
         return { lot: lotFromHeader, source: "lotHeader" };
-      }
-
-      if (!breedMarker) {
-        const lotFromB = normalizeLot(fromColumnB);
-        if (lotFromB) {
-          return { lot: lotFromB, source: "columnB" };
-        }
       }
 
       return { lot: null, source: null };
@@ -244,7 +232,7 @@
       if (lines.length < 2) {
         return {
           tokens: [],
-          stats: { lotHeader: 0, columnB: 0, breedMarkers: 0, rejected: 0 }
+          stats: { lotHeader: 0, breedMarkers: 0, rejected: 0 }
         };
       }
 
@@ -254,7 +242,6 @@
       const tokens = [];
       const stats = {
         lotHeader: 0,
-        columnB: 0,
         breedMarkers: 0,
         rejected: 0
       };
@@ -262,6 +249,7 @@
       for (let i = 1; i < lines.length; i++) {
         const cols = splitCSVLine(lines[i]);
 
+        // Breed markers come from column B only
         const columnB = cleanCell(cols[1] || "");
         const breedScene = getBreedTransitionName(columnB);
 
@@ -276,6 +264,7 @@
           }
         }
 
+        // Lots come only from Lot Number column
         const chosen = chooseLotValue(cols, lotIndex);
 
         if (chosen.lot) {
@@ -288,7 +277,6 @@
             });
 
             if (chosen.source === "lotHeader") stats.lotHeader++;
-            if (chosen.source === "columnB") stats.columnB++;
           }
         } else {
           const rawLotHeader = lotIndex >= 0 ? cleanCell(cols[lotIndex] || "") : "";
