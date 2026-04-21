@@ -96,14 +96,14 @@
           throw new Error("No usable rows found in CSV.");
         }
 
-        setStatus("Building scene list from template...");
+        setStatus("Building scene collection...");
         const output = buildFromTemplate(templateData, rows);
 
         downloadJSON(output, "updated_scene_collection.json");
         setStatus(
           "Done.\n" +
           "Rows found: " + rows.length + "\n" +
-          "New OBS file is ready to download."
+          "Scene collection generated successfully."
         );
       } catch (error) {
         console.error(error);
@@ -170,12 +170,8 @@
       const lotIndex = headers.findIndex(h => h.toLowerCase() === "lot number");
       const typeIndex = headers.findIndex(h => h.toLowerCase() === "type");
 
-      if (lotIndex === -1) {
-        throw new Error('Could not find "Lot Number" column.');
-      }
-      if (typeIndex === -1) {
-        throw new Error('Could not find "Type" column.');
-      }
+      if (lotIndex === -1) throw new Error('Could not find "Lot Number" column.');
+      if (typeIndex === -1) throw new Error('Could not find "Type" column.');
 
       const rows = [];
       for (let i = 1; i < lines.length; i++) {
@@ -184,11 +180,7 @@
         const type = cleanCell(cols[typeIndex] || "");
 
         if (!lot) continue;
-
-        rows.push({
-          lot,
-          type
-        });
+        rows.push({ lot, type });
       }
 
       return rows;
@@ -198,25 +190,12 @@
       return String(name).replace(/\s+/g, " ").trim();
     }
 
-    function isLotScene(name) {
-      const cleaned = normalizeSceneName(name);
-      return /^\d+(-[A-Z])? (Transition|Video)$/.test(cleaned);
+    function isLotTransitionScene(name) {
+      return /^\d+(-[A-Z])? Transition$/i.test(normalizeSceneName(name));
     }
 
-    function getSceneMap(templateData) {
-      const map = new Map();
-      if (Array.isArray(templateData.sources)) {
-        for (const source of templateData.sources) {
-          if (source && source.name) {
-            map.set(normalizeSceneName(source.name), deepClone(source));
-          }
-        }
-      }
-      return map;
-    }
-
-    function deepClone(obj) {
-      return JSON.parse(JSON.stringify(obj));
+    function isLotVideoScene(name) {
+      return /^\d+(-[A-Z])? Video$/i.test(normalizeSceneName(name));
     }
 
     function isOptionLot(lot) {
@@ -224,9 +203,30 @@
     }
 
     function getOptionBase(lot) {
-      const cleaned = String(lot).trim().toUpperCase();
-      const match = cleaned.match(/^(\d+)-[A-Z]$/);
+      const match = String(lot).trim().toUpperCase().match(/^(\d+)-[A-Z]$/);
       return match ? match[1] : null;
+    }
+
+    function deepClone(obj) {
+      return JSON.parse(JSON.stringify(obj));
+    }
+
+    function getSourceMap(templateData) {
+      const map = new Map();
+      for (const source of (templateData.sources || [])) {
+        if (source && source.name) {
+          map.set(normalizeSceneName(source.name), deepClone(source));
+        }
+      }
+      return map;
+    }
+
+    function getBreedTransitionName(typeValue) {
+      const t = String(typeValue || "").toLowerCase();
+      if (t.includes("char")) return "Charloais Transition";
+      if (t.includes("native")) return "Native Transition";
+      if (t.includes("holstein")) return "Hosltein Transition";
+      return null;
     }
 
     function groupRows(rows) {
@@ -234,56 +234,56 @@
       let i = 0;
 
       while (i < rows.length) {
-        const current = rows[i];
-        const currentIsOption = isOptionLot(current.lot);
-        const currentBase = getOptionBase(current.lot);
+        const row = rows[i];
 
-        if (!currentIsOption) {
-          groups.push([current]);
+        if (!isOptionLot(row.lot)) {
+          groups.push({
+            kind: "single",
+            type: row.type,
+            rows: [row]
+          });
           i++;
           continue;
         }
 
-        const optionGroup = [current];
+        const base = getOptionBase(row.lot);
+        const type = row.type;
+        const optionRows = [row];
         let j = i + 1;
 
         while (j < rows.length) {
           const next = rows[j];
-          const nextIsOption = isOptionLot(next.lot);
-          const nextBase = getOptionBase(next.lot);
-
-          if (
-            nextIsOption &&
-            nextBase === currentBase &&
-            next.type === current.type
-          ) {
-            optionGroup.push(next);
+          if (isOptionLot(next.lot) && getOptionBase(next.lot) === base && next.type === type) {
+            optionRows.push(next);
             j++;
           } else {
             break;
           }
         }
 
-        groups.push(optionGroup);
-        i = j;
+        if (optionRows.length >= 2) {
+          groups.push({
+            kind: "option_group",
+            type,
+            rows: optionRows
+          });
+          i = j;
+        } else {
+          groups.push({
+            kind: "single",
+            type: row.type,
+            rows: [row]
+          });
+          i++;
+        }
       }
 
       return groups;
     }
 
-    function getBreedTransitionName(typeValue) {
-      const t = typeValue.toLowerCase();
-
-      if (t.includes("char")) return "Charloais Transition";
-      if (t.includes("native")) return "Native Transition";
-      if (t.includes("holstein")) return "Hosltein Transition";
-
-      return null;
-    }
-
     function buildFromTemplate(templateData, rows) {
-      const sceneMap = getSceneMap(templateData);
-      const originalSceneOrder = templateData.scene_order.map(s => s.name);
+      const sourceMap = getSourceMap(templateData);
+      const originalSceneNames = (templateData.scene_order || []).map(s => s.name);
 
       const fixedStartScenes = [
         "CMS Logo",
@@ -300,119 +300,124 @@
         "I AM SERIOUS"
       ];
 
-      const optionInterludeName = originalSceneOrder.find(name =>
+      const breedTransitionScenes = [
+        "Charloais Transition",
+        "Native Transition",
+        "Hosltein Transition"
+      ];
+
+      const optionInterludePool = originalSceneNames.filter(name =>
         normalizeSceneName(name).startsWith("Option Lot Interlude")
       );
 
-      if (!optionInterludeName) {
-        throw new Error("Could not find an Option Lot Interlude scene in template.json.");
+      if (!optionInterludePool.length) {
+        throw new Error("No Option Lot Interlude scenes found in template.json.");
       }
 
-      const groups = groupRows(rows);
+      const lotTransitionPool = originalSceneNames.filter(name => isLotTransitionScene(name));
+      const lotVideoPool = originalSceneNames.filter(name => isLotVideoScene(name));
 
-      const auctionBody = [];
-      let lastBreedTransition = null;
+      if (!lotTransitionPool.length || !lotVideoPool.length) {
+        throw new Error("Could not find lot Transition/Video scenes in template.json.");
+      }
+
+      let transitionPtr = 0;
+      let videoPtr = 0;
+      let interludePtr = 0;
+
+      const groups = groupRows(rows);
+      const finalSceneNames = [...fixedStartScenes];
+
+      let currentBreed = null;
       let firstBreedSection = true;
 
       for (const group of groups) {
-        const firstRow = group[0];
-        const breedTransition = getBreedTransitionName(firstRow.type);
+        const breedTransition = getBreedTransitionName(group.type);
 
-        if (!firstBreedSection && breedTransition && breedTransition !== lastBreedTransition) {
-          auctionBody.push(breedTransition);
-        }
-
-        if (firstBreedSection) {
+        if (breedTransition !== currentBreed) {
+          if (!firstBreedSection && breedTransition) {
+            finalSceneNames.push(breedTransition);
+          }
+          currentBreed = breedTransition;
           firstBreedSection = false;
         }
 
-        if (breedTransition) {
-          lastBreedTransition = breedTransition;
+        if (group.kind === "option_group") {
+          if (interludePtr >= optionInterludePool.length) {
+            throw new Error("Not enough Option Lot Interlude scenes in template.json.");
+          }
+          finalSceneNames.push(optionInterludePool[interludePtr++]);
         }
 
-        const isOptionGroup =
-          group.length > 1 &&
-          group.every(row => isOptionLot(row.lot)) &&
-          group.every(row => getOptionBase(row.lot) === getOptionBase(group[0].lot));
-
-        if (isOptionGroup) {
-          auctionBody.push(optionInterludeName);
+        for (const row of group.rows) {
+          finalSceneNames.push(row.lot + " Transition");
+          finalSceneNames.push(row.lot + " Video");
         }
 
-        for (const row of group) {
-          auctionBody.push(row.lot + " Transition");
-          auctionBody.push(row.lot + " Video");
-        }
-
-        if (isOptionGroup) {
-          auctionBody.push(optionInterludeName);
+        if (group.kind === "option_group") {
+          if (interludePtr >= optionInterludePool.length) {
+            throw new Error("Not enough Option Lot Interlude scenes in template.json.");
+          }
+          finalSceneNames.push(optionInterludePool[interludePtr++]);
         }
       }
 
-      const finalSceneNames = [
-        ...fixedStartScenes,
-        ...auctionBody,
-        ...fixedEndScenes
-      ];
+      finalSceneNames.push(...fixedEndScenes);
 
       const newSceneOrder = [];
-      const newSources = [];
-      const usedSourceNames = new Set();
+      const newSceneSources = [];
+      const usedExactSceneNames = new Set();
 
       for (const targetName of finalSceneNames) {
-        let templateSceneName = targetName;
+        let templateSceneName = null;
+        const normalizedTarget = normalizeSceneName(targetName);
 
-        if (!sceneMap.has(normalizeSceneName(templateSceneName))) {
-          if (isLotScene(targetName)) {
-            templateSceneName = findAnyAvailableLotTemplate(originalSceneOrder, usedSourceNames);
-            if (!templateSceneName) {
-              throw new Error("Not enough lot template scenes in template.json.");
-            }
-          } else if (normalizeSceneName(targetName).startsWith("Option Lot Interlude")) {
-            templateSceneName = optionInterludeName;
-          } else {
-            throw new Error("Could not find template scene: " + targetName);
+        if (fixedStartScenes.includes(targetName) || fixedEndScenes.includes(targetName) || breedTransitionScenes.includes(targetName) || normalizedTarget.startsWith("Option Lot Interlude")) {
+          templateSceneName = targetName;
+        } else if (isLotTransitionScene(targetName)) {
+          if (transitionPtr >= lotTransitionPool.length) {
+            throw new Error("Not enough Transition template scenes.");
           }
+          templateSceneName = lotTransitionPool[transitionPtr++];
+        } else if (isLotVideoScene(targetName)) {
+          if (videoPtr >= lotVideoPool.length) {
+            throw new Error("Not enough Video template scenes.");
+          }
+          templateSceneName = lotVideoPool[videoPtr++];
+        } else {
+          throw new Error("Unhandled target scene: " + targetName);
         }
 
-        const normalizedTemplateName = normalizeSceneName(templateSceneName);
+        const normalizedTemplate = normalizeSceneName(templateSceneName);
 
-        if (isLotScene(targetName)) {
-          usedSourceNames.add(normalizedTemplateName);
+        if (usedExactSceneNames.has(normalizedTarget)) {
+          throw new Error("Duplicate scene name would be created: " + targetName);
         }
+        usedExactSceneNames.add(normalizedTarget);
+
+        const sourceTemplate = sourceMap.get(normalizedTemplate);
+        if (!sourceTemplate) {
+          throw new Error("Could not find source template for: " + templateSceneName);
+        }
+
+        const clonedSource = deepClone(sourceTemplate);
+        clonedSource.name = targetName;
 
         newSceneOrder.push({ name: targetName });
-
-        const sourceTemplate = sceneMap.get(normalizedTemplateName);
-        if (sourceTemplate) {
-          const clonedSource = deepClone(sourceTemplate);
-          clonedSource.name = targetName;
-          newSources.push(clonedSource);
-        }
+        newSceneSources.push(clonedSource);
       }
+
+      const nonSceneSources = (templateData.sources || [])
+        .filter(source => source.id !== "scene")
+        .map(source => deepClone(source));
 
       const output = deepClone(templateData);
       output.scene_order = newSceneOrder;
-
-      const preservedNonSceneSources = (templateData.sources || []).filter(
-        s => s.id !== "scene"
-      );
-
-      output.sources = [...newSources, ...deepClone(preservedNonSceneSources)];
+      output.sources = [...newSceneSources, ...nonSceneSources];
       output.current_scene = "STOPPPPP";
       output.current_program_scene = "End Scene";
 
       return output;
-    }
-
-    function findAnyAvailableLotTemplate(sceneNames, usedSourceNames) {
-      for (const name of sceneNames) {
-        const cleaned = normalizeSceneName(name);
-        if (isLotScene(cleaned) && !usedSourceNames.has(cleaned)) {
-          return name;
-        }
-      }
-      return null;
     }
 
     function downloadJSON(data, filename) {
