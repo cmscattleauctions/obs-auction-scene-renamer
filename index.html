@@ -90,10 +90,10 @@
         setStatus("Reading CSV...");
         const csvText = await readFileAsText(csvFile);
 
-        setStatus("Parsing column B...");
-        const tokens = parseColumnB(csvText);
+        setStatus("Parsing CSV...");
+        const tokens = parseCSVIntoTokens(csvText);
         if (!tokens.length) {
-          throw new Error("No usable values found in column B.");
+          throw new Error("No usable lot rows found in CSV.");
         }
 
         setStatus("Building scene collection...");
@@ -102,8 +102,9 @@
         downloadJSON(output, "updated_scene_collection.json");
         setStatus(
           "Done.\n" +
-          "Entries found in column B: " + tokens.length + "\n" +
-          "Breed markers and lots were read directly from column B."
+          "Entries found: " + tokens.length + "\n" +
+          "Breed markers are read from column B.\n" +
+          "Lots are read from the Lot Number column."
         );
       } catch (error) {
         console.error(error);
@@ -161,21 +162,20 @@
     }
 
     function normalizeLot(rawLot) {
-      const value = cleanCell(rawLot).replace(/\s+/g, "").toUpperCase();
+      const lot = cleanCell(rawLot).replace(/\s+/g, "").toUpperCase();
 
-      const dashed = value.match(/^(\d+)-([A-Z])$/);
+      const dashed = lot.match(/^(\d+)-([A-Z])$/);
       if (dashed) {
         return dashed[1] + "-" + dashed[2];
       }
 
-      const undashed = value.match(/^(\d+)([A-Z])$/);
+      const undashed = lot.match(/^(\d+)([A-Z])$/);
       if (undashed) {
         return undashed[1] + "-" + undashed[2];
       }
 
-      const plain = value.match(/^\d+$/);
-      if (plain) {
-        return value;
+      if (/^\d+$/.test(lot)) {
+        return lot;
       }
 
       return null;
@@ -191,27 +191,40 @@
       return null;
     }
 
-    function parseColumnB(csvText) {
+    function parseCSVIntoTokens(csvText) {
       const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== "");
+      if (lines.length < 2) return [];
+
+      const headers = splitCSVLine(lines[0]).map(h => cleanCell(h));
+      const lotIndex = headers.findIndex(h => h.toLowerCase() === "lot number");
+
+      if (lotIndex === -1) {
+        throw new Error('Could not find "Lot Number" column.');
+      }
+
       const tokens = [];
 
-      for (let i = 0; i < lines.length; i++) {
+      for (let i = 1; i < lines.length; i++) {
         const cols = splitCSVLine(lines[i]);
 
-        // Column B = index 1
-        const cell = cleanCell(cols[1] || "");
-        if (!cell) continue;
+        // Breed markers come from column B
+        const columnB = cleanCell(cols[1] || "");
+        const breedScene = getBreedTransitionName(columnB);
 
-        const breedScene = getBreedTransitionName(cell);
         if (breedScene) {
-          tokens.push({
-            kind: "breed_transition",
-            name: breedScene
-          });
-          continue;
+          const lastToken = tokens[tokens.length - 1];
+          if (!lastToken || lastToken.kind !== "breed_transition" || lastToken.name !== breedScene) {
+            tokens.push({
+              kind: "breed_transition",
+              name: breedScene
+            });
+          }
         }
 
-        const lot = normalizeLot(cell);
+        // Lots still come from Lot Number column
+        const rawLot = cleanCell(cols[lotIndex] || "");
+        const lot = normalizeLot(rawLot);
+
         if (lot) {
           tokens.push({
             kind: "lot",
