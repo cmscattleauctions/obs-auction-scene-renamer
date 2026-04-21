@@ -104,7 +104,8 @@
           "Done.\n" +
           "Entries found: " + tokens.length + "\n" +
           "Breed markers are read from column B.\n" +
-          "Lots are read from the Lot Number column."
+          "Lots are read from the Lot Number column.\n" +
+          "If the template runs out of lot scenes, the last transition/video templates are automatically reused."
         );
       } catch (error) {
         console.error(error);
@@ -221,7 +222,7 @@
           }
         }
 
-        // Lots still come from Lot Number column
+        // Lots come from Lot Number column
         const rawLot = cleanCell(cols[lotIndex] || "");
         const lot = normalizeLot(rawLot);
 
@@ -447,15 +448,17 @@
         ) {
           templateSceneName = targetName;
         } else if (isLotTransitionScene(targetName)) {
-          if (transitionPtr >= lotTransitionPool.length) {
-            throw new Error("Not enough Transition template scenes.");
+          if (transitionPtr < lotTransitionPool.length) {
+            templateSceneName = lotTransitionPool[transitionPtr++];
+          } else {
+            templateSceneName = lotTransitionPool[lotTransitionPool.length - 1];
           }
-          templateSceneName = lotTransitionPool[transitionPtr++];
         } else if (isLotVideoScene(targetName)) {
-          if (videoPtr >= lotVideoPool.length) {
-            throw new Error("Not enough Video template scenes.");
+          if (videoPtr < lotVideoPool.length) {
+            templateSceneName = lotVideoPool[videoPtr++];
+          } else {
+            templateSceneName = lotVideoPool[lotVideoPool.length - 1];
           }
-          templateSceneName = lotVideoPool[videoPtr++];
         } else {
           throw new Error("Unhandled target scene: " + targetName);
         }
