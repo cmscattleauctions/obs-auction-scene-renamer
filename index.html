@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OBS Auction Scene Renamer</title>
+</head>
+<body style="font-family: Arial; text-align: center; margin-top: 50px;">
+
+    <h1>OBS Auction Scene Renamer</h1>
+
+    <p>Upload your OBS Scene Collection JSON:</p>
+    <input type="file" id="obsFile">
+
+    <p>Upload your Lot CSV:</p>
+    <input type="file" id="csvFile">
+
+    <br><br>
+
+    <button onclick="processFiles()">Generate New Scene Collection</button>
+
+    <br><br>
+
+    <a id="downloadLink" style="display:none;">Download Updated OBS File</a>
+
+    <script src="script.js"></script>
+
+</body>
+</html>
