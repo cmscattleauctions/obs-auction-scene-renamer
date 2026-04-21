@@ -221,12 +221,41 @@
       return map;
     }
 
-    function getBreedTransitionName(typeValue) {
-      const t = String(typeValue || "").toLowerCase();
-      if (t.includes("char")) return "Charloais Transition";
-      if (t.includes("native")) return "Native Transition";
-      if (t.includes("holstein")) return "Hosltein Transition";
-      return null;
+    function getBreedInfo(typeValue) {
+      const t = String(typeValue || "").toLowerCase().trim();
+
+      if (t.includes("char")) {
+        return {
+          key: "charolais",
+          transition: "Charloais Transition"
+        };
+      }
+
+      if (t.includes("native")) {
+        return {
+          key: "native",
+          transition: "Native Transition"
+        };
+      }
+
+      if (t.includes("holstein") || t.includes("hol")) {
+        return {
+          key: "holstein",
+          transition: "Hosltein Transition"
+        };
+      }
+
+      if (t.includes("black")) {
+        return {
+          key: "black",
+          transition: null
+        };
+      }
+
+      return {
+        key: t,
+        transition: null
+      };
     }
 
     function groupRows(rows) {
@@ -321,25 +350,24 @@
         throw new Error("Could not find lot Transition/Video scenes in template.json.");
       }
 
-      let transitionPtr = 0;
-      let videoPtr = 0;
-      let interludePtr = 0;
-
       const groups = groupRows(rows);
       const finalSceneNames = [...fixedStartScenes];
 
-      let currentBreed = null;
+      let currentBreedKey = null;
       let firstBreedSection = true;
       let previousWasOptionGroup = false;
+      let interludePtr = 0;
 
       for (const group of groups) {
-        const breedTransition = getBreedTransitionName(group.type);
+        const breedInfo = getBreedInfo(group.type);
+        const breedKey = breedInfo.key;
+        const breedTransition = breedInfo.transition;
 
-        if (breedTransition !== currentBreed) {
+        if (breedKey !== currentBreedKey) {
           if (!firstBreedSection && breedTransition) {
             finalSceneNames.push(breedTransition);
           }
-          currentBreed = breedTransition;
+          currentBreedKey = breedKey;
           firstBreedSection = false;
           previousWasOptionGroup = false;
         }
@@ -392,6 +420,9 @@
       const newSceneOrder = [];
       const newSceneSources = [];
       const usedExactSceneNames = new Set();
+
+      let transitionPtr = 0;
+      let videoPtr = 0;
 
       for (const targetName of finalCompressed) {
         let templateSceneName = null;
