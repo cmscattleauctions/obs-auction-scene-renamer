@@ -91,20 +91,31 @@
         const csvText = await readFileAsText(csvFile);
 
         setStatus("Parsing CSV...");
-        const tokens = parseCSVIntoTokens(csvText);
-        if (!tokens.length) {
+        const parsed = parseCSVIntoTokens(csvText);
+        if (!parsed.tokens.length) {
           throw new Error("No usable lot rows found in CSV.");
         }
 
-        setStatus("Building scene collection...");
-        const output = buildFromTemplate(templateData, tokens);
+        setStatus(
+          "Building scene collection...\n" +
+          "Lot source counts:\n" +
+          "Lot Number column: " + parsed.stats.lotHeader + "\n" +
+          "Column B fallback: " + parsed.stats.columnB + "\n" +
+          "Breed markers: " + parsed.stats.breedMarkers + "\n" +
+          "Rejected as zero/junk: " + parsed.stats.rejected
+        );
+
+        const output = buildFromTemplate(templateData, parsed.tokens);
 
         downloadJSON(output, "updated_scene_collection.json");
         setStatus(
           "Done.\n" +
-          "Entries found: " + tokens.length + "\n" +
-          "Breed markers are read from column B.\n" +
-          "Lots are read from the Lot Number column.\n" +
+          "Entries found: " + parsed.tokens.length + "\n" +
+          "Lot source counts:\n" +
+          "Lot Number column: " + parsed.stats.lotHeader + "\n" +
+          "Column B fallback: " + parsed.stats.columnB + "\n" +
+          "Breed markers: " + parsed.stats.breedMarkers + "\n" +
+          "Rejected as zero/junk: " + parsed.stats.rejected + "\n" +
           "Overflow lot scenes reuse the last template scene if needed."
         );
       } catch (error) {
@@ -162,47 +173,6 @@
       return String(name).replace(/\s+/g, " ").trim();
     }
 
-    function normalizeLot(rawLot) {
-      let lot = cleanCell(rawLot).toUpperCase();
-
-      if (!lot) return null;
-
-      lot = lot.replace(/\s+/g, "");
-      lot = lot.replace(/,/g, "");
-      lot = lot.replace(/_/g, "-");
-
-      // plain integer formatted by Excel like 210.0
-      if (/^\d+\.0+$/.test(lot)) {
-        lot = lot.replace(/\.0+$/, "");
-      }
-
-      // strip periods only after handling x.0 style
-      lot = lot.replace(/\./g, "");
-
-      // Accept ONLY these exact lot formats:
-      // 201
-      // 217A
-      // 217-A
-      let match = lot.match(/^(\d+)-([A-Z])$/);
-      if (match) {
-        return match[1] + "-" + match[2];
-      }
-
-      match = lot.match(/^(\d+)([A-Z])$/);
-      if (match) {
-        return match[1] + "-" + match[2];
-      }
-
-      match = lot.match(/^(\d+)$/);
-      if (match) {
-        // reject zero as a fake lot
-        if (match[1] === "0") return null;
-        return match[1];
-      }
-
-      return null;
-    }
-
     function getBreedTransitionName(value) {
       const t = cleanCell(value).toLowerCase();
 
@@ -213,23 +183,85 @@
       return null;
     }
 
+    function normalizeLot(rawLot) {
+      let lot = cleanCell(rawLot).toUpperCase();
+      if (!lot) return null;
+
+      lot = lot.replace(/\s+/g, "");
+      lot = lot.replace(/,/g, "");
+      lot = lot.replace(/_/g, "-");
+
+      if (/^\d+\.0+$/.test(lot)) {
+        lot = lot.replace(/\.0+$/, "");
+      }
+
+      lot = lot.replace(/\./g, "");
+
+      let match = lot.match(/^(\d+)-([A-Z])$/);
+      if (match) {
+        if (match[1] === "0") return null;
+        return match[1] + "-" + match[2];
+      }
+
+      match = lot.match(/^(\d+)([A-Z])$/);
+      if (match) {
+        if (match[1] === "0") return null;
+        return match[1] + "-" + match[2];
+      }
+
+      match = lot.match(/^(\d+)$/);
+      if (match) {
+        if (match[1] === "0") return null;
+        return match[1];
+      }
+
+      return null;
+    }
+
+    function chooseLotValue(cols, lotIndex) {
+      const fromLotHeader = lotIndex >= 0 ? cleanCell(cols[lotIndex] || "") : "";
+      const fromColumnB = cleanCell(cols[1] || "");
+
+      const breedMarker = getBreedTransitionName(fromColumnB);
+
+      const lotFromHeader = normalizeLot(fromLotHeader);
+      if (lotFromHeader) {
+        return { lot: lotFromHeader, source: "lotHeader" };
+      }
+
+      if (!breedMarker) {
+        const lotFromB = normalizeLot(fromColumnB);
+        if (lotFromB) {
+          return { lot: lotFromB, source: "columnB" };
+        }
+      }
+
+      return { lot: null, source: null };
+    }
+
     function parseCSVIntoTokens(csvText) {
       const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== "");
-      if (lines.length < 2) return [];
+      if (lines.length < 2) {
+        return {
+          tokens: [],
+          stats: { lotHeader: 0, columnB: 0, breedMarkers: 0, rejected: 0 }
+        };
+      }
 
       const headers = splitCSVLine(lines[0]).map(h => cleanCell(h));
       const lotIndex = headers.findIndex(h => h.toLowerCase() === "lot number");
 
-      if (lotIndex === -1) {
-        throw new Error('Could not find "Lot Number" column.');
-      }
-
       const tokens = [];
+      const stats = {
+        lotHeader: 0,
+        columnB: 0,
+        breedMarkers: 0,
+        rejected: 0
+      };
 
       for (let i = 1; i < lines.length; i++) {
         const cols = splitCSVLine(lines[i]);
 
-        // Breed markers come from column B
         const columnB = cleanCell(cols[1] || "");
         const breedScene = getBreedTransitionName(columnB);
 
@@ -240,22 +272,34 @@
               kind: "breed_transition",
               name: breedScene
             });
+            stats.breedMarkers++;
           }
         }
 
-        // Lots come only from Lot Number column
-        const rawLot = cleanCell(cols[lotIndex] || "");
-        const lot = normalizeLot(rawLot);
+        const chosen = chooseLotValue(cols, lotIndex);
 
-        if (lot) {
-          tokens.push({
-            kind: "lot",
-            lot
-          });
+        if (chosen.lot) {
+          const lastToken = tokens[tokens.length - 1];
+
+          if (!(lastToken && lastToken.kind === "lot" && lastToken.lot === chosen.lot)) {
+            tokens.push({
+              kind: "lot",
+              lot: chosen.lot
+            });
+
+            if (chosen.source === "lotHeader") stats.lotHeader++;
+            if (chosen.source === "columnB") stats.columnB++;
+          }
+        } else {
+          const rawLotHeader = lotIndex >= 0 ? cleanCell(cols[lotIndex] || "") : "";
+          const rawB = cleanCell(cols[1] || "");
+          if (rawLotHeader === "0" || rawB === "0" || rawLotHeader === "0.0" || rawB === "0.0") {
+            stats.rejected++;
+          }
         }
       }
 
-      return tokens;
+      return { tokens, stats };
     }
 
     function isLotTransitionScene(name) {
