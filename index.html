@@ -168,10 +168,13 @@
 
       const headers = splitCSVLine(lines[0]).map(h => cleanCell(h));
       const lotIndex = headers.findIndex(h => h.toLowerCase() === "lot number");
-      const typeIndex = headers.findIndex(h => h.toLowerCase() === "type");
 
-      if (lotIndex === -1) throw new Error('Could not find "Lot Number" column.');
-      if (typeIndex === -1) throw new Error('Could not find "Type" column.');
+      if (lotIndex === -1) {
+        throw new Error('Could not find "Lot Number" column.');
+      }
+
+      // Column B = index 1, per your instructions
+      const typeIndex = 1;
 
       const rows = [];
       for (let i = 1; i < lines.length; i++) {
@@ -180,7 +183,11 @@
         const type = cleanCell(cols[typeIndex] || "");
 
         if (!lot) continue;
-        rows.push({ lot, type });
+
+        rows.push({
+          lot,
+          type
+        });
       }
 
       return rows;
@@ -221,24 +228,21 @@
       return map;
     }
 
-    function getBreedTransitionFromType(typeValue) {
-      const t = String(typeValue || "").trim().toLowerCase();
+    function getBreedKey(typeValue) {
+      const t = cleanCell(typeValue);
 
-      if (t === "char x") return "Charloais Transition";
-      if (t === "natives") return "Native Transition";
-      if (t === "holstein steers") return "Hosltein Transition";
+      if (t === "Char X") return "char";
+      if (t === "Natives") return "native";
+      if (t === "Holstein Steers") return "holstein";
 
-      return null;
+      return "black";
     }
 
-    function getBreedKeyFromType(typeValue) {
-      const t = String(typeValue || "").trim().toLowerCase();
-
-      if (t === "char x") return "char_x";
-      if (t === "natives") return "natives";
-      if (t === "holstein steers") return "holstein_steers";
-
-      return "black_x_beef_on_dairy";
+    function getBreedTransition(breedKey) {
+      if (breedKey === "char") return "Charloais Transition";
+      if (breedKey === "native") return "Native Transition";
+      if (breedKey === "holstein") return "Hosltein Transition";
+      return null;
     }
 
     function groupRows(rows) {
@@ -336,19 +340,19 @@
       const groups = groupRows(rows);
       const finalSceneNames = [...fixedStartScenes];
 
-      let currentBreedKey = "black_x_beef_on_dairy";
+      let currentBreed = "black";
       let previousWasOptionGroup = false;
       let interludePtr = 0;
 
       for (const group of groups) {
-        const groupBreedKey = getBreedKeyFromType(group.type);
-        const breedTransition = getBreedTransitionFromType(group.type);
+        const breedKey = getBreedKey(group.type);
+        const breedTransition = getBreedTransition(breedKey);
 
-        if (groupBreedKey !== currentBreedKey) {
+        if (breedKey !== currentBreed) {
           if (breedTransition) {
             finalSceneNames.push(breedTransition);
           }
-          currentBreedKey = groupBreedKey;
+          currentBreed = breedKey;
           previousWasOptionGroup = false;
         }
 
