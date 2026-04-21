@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>OBS Auction Scene Renamer</title>
+  <title>OBS Auction Scene Builder</title>
   <style>
     body {
       font-family: Arial, sans-serif;
-      max-width: 800px;
+      max-width: 900px;
       margin: 40px auto;
       padding: 0 20px;
       text-align: center;
@@ -37,16 +37,20 @@
       border-radius: 8px;
       padding: 12px;
     }
+    code {
+      background: #f3f3f3;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
   </style>
 </head>
 <body>
-  <h1>OBS Auction Scene Renamer</h1>
+  <h1>OBS Auction Scene Builder</h1>
 
   <div class="box">
-    <p><strong>1.</strong> Upload OBS Scene Collection JSON</p>
-    <input type="file" id="obsFile" accept=".json" />
+    <p>Upload only your monthly auction CSV. This page uses <code>template.json</code> from your GitHub repo as the OBS master template.</p>
 
-    <p><strong>2.</strong> Upload Auction CSV</p>
+    <p><strong>Upload Auction CSV</strong></p>
     <input type="file" id="csvFile" accept=".csv" />
 
     <div>
@@ -57,7 +61,7 @@
       <a id="downloadLink">Download Updated OBS File</a>
     </div>
 
-    <div id="status">Waiting for files...</div>
+    <div id="status">Waiting for CSV...</div>
   </div>
 
   <script>
@@ -67,174 +71,54 @@
       document.getElementById("status").textContent = message;
     }
 
-    function processFiles() {
-      const obsFile = document.getElementById("obsFile").files[0];
+    async function processFiles() {
       const csvFile = document.getElementById("csvFile").files[0];
 
-      if (!obsFile || !csvFile) {
-        alert("Please upload both files.");
+      if (!csvFile) {
+        alert("Please upload the monthly CSV.");
         return;
       }
 
-      setStatus("Reading files...");
+      try {
+        setStatus("Loading template.json from your GitHub repo...");
+        const templateResponse = await fetch("./template.json");
+        if (!templateResponse.ok) {
+          throw new Error("Could not load template.json from the repo.");
+        }
+        const templateData = await templateResponse.json();
 
-      const obsReader = new FileReader();
-      const csvReader = new FileReader();
+        setStatus("Reading CSV...");
+        const csvText = await readFileAsText(csvFile);
 
-      obsReader.onload = function(obsEvent) {
-        csvReader.onload = function(csvEvent) {
-          try {
-            const obsData = JSON.parse(obsEvent.target.result);
-            const csvText = csvEvent.target.result;
+        setStatus("Parsing CSV...");
+        const rows = parseCSVRows(csvText);
+        if (!rows.length) {
+          throw new Error("No usable rows found in CSV.");
+        }
 
-            setStatus("Parsing CSV...");
-            const lotNames = buildLotNamesFromCSV(csvText);
+        setStatus("Building scene list from template...");
+        const output = buildFromTemplate(templateData, rows);
 
-            if (!lotNames.length) {
-              alert("No lot names found in the CSV.");
-              setStatus("No lot names found in the CSV.");
-              return;
-            }
-
-            setStatus("Found " + lotNames.length + " lot names. Renaming scenes...");
-
-            const lotSceneIndexes = [];
-            for (let i = 0; i < obsData.scene_order.length; i++) {
-              const sceneName = obsData.scene_order[i].name;
-              if (isLotScene(sceneName)) {
-                lotSceneIndexes.push(i);
-              }
-            }
-
-            const renameMap = new Map();
-            let lotIndex = 0;
-            let unusedIndex = 1;
-
-            for (let i = 0; i < lotSceneIndexes.length; i += 2) {
-              const firstIndex = lotSceneIndexes[i];
-              const secondIndex = lotSceneIndexes[i + 1];
-              if (secondIndex === undefined) break;
-
-              const firstOld = obsData.scene_order[firstIndex].name;
-              const secondOld = obsData.scene_order[secondIndex].name;
-
-              const firstIsTransition = firstOld.includes("Transition");
-              const secondIsTransition = secondOld.includes("Transition");
-
-              let transitionIndex, videoIndex, oldTransition, oldVideo;
-
-              if (firstIsTransition && !secondIsTransition) {
-                transitionIndex = firstIndex;
-                videoIndex = secondIndex;
-                oldTransition = firstOld;
-                oldVideo = secondOld;
-              } else if (!firstIsTransition && secondIsTransition) {
-                transitionIndex = secondIndex;
-                videoIndex = firstIndex;
-                oldTransition = secondOld;
-                oldVideo = firstOld;
-              } else {
-                continue;
-              }
-
-              let newTransition, newVideo;
-
-              if (lotIndex < lotNames.length) {
-                const base = lotNames[lotIndex];
-                newTransition = base + " Transition";
-                newVideo = base + " Video";
-                lotIndex++;
-              } else {
-                const padded = String(unusedIndex).padStart(3, "0");
-                newTransition = "UNUSED " + padded + " Transition";
-                newVideo = "UNUSED " + padded + " Video";
-                unusedIndex++;
-              }
-
-              obsData.scene_order[transitionIndex].name = newTransition;
-              obsData.scene_order[videoIndex].name = newVideo;
-
-              renameMap.set(oldTransition, newTransition);
-              renameMap.set(oldVideo, newVideo);
-            }
-
-            if (Array.isArray(obsData.sources)) {
-              for (const source of obsData.sources) {
-                const sourceName = normalizeSceneName(source.name);
-                for (const [oldName, newName] of renameMap.entries()) {
-                  if (normalizeSceneName(oldName) === sourceName) {
-                    source.name = newName;
-                    break;
-                  }
-                }
-              }
-            }
-
-            if (typeof obsData.current_scene === "string") {
-              for (const [oldName, newName] of renameMap.entries()) {
-                if (normalizeSceneName(obsData.current_scene) === normalizeSceneName(oldName)) {
-                  obsData.current_scene = newName;
-                  break;
-                }
-              }
-            }
-
-            if (typeof obsData.current_program_scene === "string") {
-              for (const [oldName, newName] of renameMap.entries()) {
-                if (normalizeSceneName(obsData.current_program_scene) === normalizeSceneName(oldName)) {
-                  obsData.current_program_scene = newName;
-                  break;
-                }
-              }
-            }
-
-            downloadJSON(obsData, "updated_scene_collection.json");
-            setStatus(
-              "Done.\n" +
-              "Lot names found: " + lotNames.length + "\n" +
-              "Lot scene slots found: " + lotSceneIndexes.length + "\n" +
-              "You can now click the download link."
-            );
-          } catch (error) {
-            console.error(error);
-            alert("Error: " + error.message);
-            setStatus("Error: " + error.message);
-          }
-        };
-
-        csvReader.readAsText(csvFile);
-      };
-
-      obsReader.readAsText(obsFile);
+        downloadJSON(output, "updated_scene_collection.json");
+        setStatus(
+          "Done.\n" +
+          "Rows found: " + rows.length + "\n" +
+          "New OBS file is ready to download."
+        );
+      } catch (error) {
+        console.error(error);
+        alert("Error: " + error.message);
+        setStatus("Error: " + error.message);
+      }
     }
 
-    function buildLotNamesFromCSV(csvText) {
-      const lines = csvText
-        .split(/\r?\n/)
-        .filter(line => line.trim() !== "");
-
-      if (lines.length < 2) return [];
-
-      const headers = splitCSVLine(lines[0]).map(h => cleanCell(h));
-      const lotIndex = headers.findIndex(h => h.toLowerCase() === "lot number");
-
-      if (lotIndex === -1) {
-        throw new Error('Could not find "Lot Number" column in CSV.');
-      }
-
-      const result = [];
-
-      for (let i = 1; i < lines.length; i++) {
-        const cols = splitCSVLine(lines[i]);
-        let rawLot = cleanCell(cols[lotIndex] || "");
-
-        if (!rawLot) continue;
-
-        rawLot = normalizeLot(rawLot);
-        result.push(rawLot);
-      }
-
-      return result;
+    function readFileAsText(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = e => resolve(e.target.result);
+        reader.onerror = reject;
+        reader.readAsText(file);
+      });
     }
 
     function splitCSVLine(line) {
@@ -266,7 +150,7 @@
     }
 
     function cleanCell(value) {
-      return String(value).trim().replace(/^"|"$/g, "");
+      return String(value || "").trim().replace(/^"|"$/g, "");
     }
 
     function normalizeLot(rawLot) {
@@ -278,6 +162,38 @@
       return lot;
     }
 
+    function parseCSVRows(csvText) {
+      const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== "");
+      if (lines.length < 2) return [];
+
+      const headers = splitCSVLine(lines[0]).map(h => cleanCell(h));
+      const lotIndex = headers.findIndex(h => h.toLowerCase() === "lot number");
+      const typeIndex = headers.findIndex(h => h.toLowerCase() === "type");
+
+      if (lotIndex === -1) {
+        throw new Error('Could not find "Lot Number" column.');
+      }
+      if (typeIndex === -1) {
+        throw new Error('Could not find "Type" column.');
+      }
+
+      const rows = [];
+      for (let i = 1; i < lines.length; i++) {
+        const cols = splitCSVLine(lines[i]);
+        const lot = normalizeLot(cleanCell(cols[lotIndex] || ""));
+        const type = cleanCell(cols[typeIndex] || "");
+
+        if (!lot) continue;
+
+        rows.push({
+          lot,
+          type
+        });
+      }
+
+      return rows;
+    }
+
     function normalizeSceneName(name) {
       return String(name).replace(/\s+/g, " ").trim();
     }
@@ -285,6 +201,183 @@
     function isLotScene(name) {
       const cleaned = normalizeSceneName(name);
       return /^\d+(-[A-Z])? (Transition|Video)$/.test(cleaned);
+    }
+
+    function getSceneMap(templateData) {
+      const map = new Map();
+      if (Array.isArray(templateData.sources)) {
+        for (const source of templateData.sources) {
+          if (source && source.name) {
+            map.set(normalizeSceneName(source.name), deepClone(source));
+          }
+        }
+      }
+      return map;
+    }
+
+    function deepClone(obj) {
+      return JSON.parse(JSON.stringify(obj));
+    }
+
+    function groupRows(rows) {
+      const groups = [];
+      let currentGroup = [];
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        if (!currentGroup.length) {
+          currentGroup.push(row);
+          continue;
+        }
+
+        if (currentGroup[currentGroup.length - 1].lot === row.lot) {
+          currentGroup.push(row);
+        } else {
+          groups.push(currentGroup);
+          currentGroup = [row];
+        }
+      }
+
+      if (currentGroup.length) groups.push(currentGroup);
+      return groups;
+    }
+
+    function getBreedTransitionName(typeValue) {
+      const t = typeValue.toLowerCase();
+
+      if (t.includes("char")) return "Charloais Transition";
+      if (t.includes("native")) return "Native Transition";
+      if (t.includes("holstein")) return "Hosltein Transition";
+
+      return null;
+    }
+
+    function buildFromTemplate(templateData, rows) {
+      const sceneMap = getSceneMap(templateData);
+      const originalSceneOrder = templateData.scene_order.map(s => s.name);
+
+      const fixedStartScenes = [
+        "CMS Logo",
+        "Waiting Room Scene",
+        "Intro Video",
+        "CMS Name Panel"
+      ];
+
+      const fixedEndScenes = [
+        "CMS Name Panel END",
+        "End Scene",
+        "THIS IS THE END",
+        "STOPPPPP",
+        "I AM SERIOUS"
+      ];
+
+      const optionInterludeName = originalSceneOrder.find(name => normalizeSceneName(name).startsWith("Option Lot Interlude"));
+      if (!optionInterludeName) {
+        throw new Error("Could not find an Option Lot Interlude scene in template.json.");
+      }
+
+      const groups = groupRows(rows);
+
+      const auctionBody = [];
+      let lastBreedTransition = null;
+      let firstBreedSection = true;
+
+      for (const group of groups) {
+        const firstRow = group[0];
+        const breedTransition = getBreedTransitionName(firstRow.type);
+
+        if (!firstBreedSection && breedTransition && breedTransition !== lastBreedTransition) {
+          auctionBody.push(breedTransition);
+        }
+
+        if (firstBreedSection) {
+          firstBreedSection = false;
+        }
+
+        if (breedTransition) {
+          lastBreedTransition = breedTransition;
+        }
+
+        const isOptionGroup = group.length > 1 || /-\w$/i.test(firstRow.lot);
+
+        if (isOptionGroup) {
+          auctionBody.push(optionInterludeName);
+        }
+
+        for (const row of group) {
+          auctionBody.push(row.lot + " Transition");
+          auctionBody.push(row.lot + " Video");
+        }
+
+        if (isOptionGroup) {
+          auctionBody.push(optionInterludeName);
+        }
+      }
+
+      const finalSceneNames = [
+        ...fixedStartScenes,
+        ...auctionBody,
+        ...fixedEndScenes
+      ];
+
+      const newSceneOrder = [];
+      const newSources = [];
+      const usedSourceNames = new Set();
+
+      for (const targetName of finalSceneNames) {
+        let templateSceneName = targetName;
+
+        if (!sceneMap.has(normalizeSceneName(templateSceneName))) {
+          if (isLotScene(targetName)) {
+            templateSceneName = findAnyAvailableLotTemplate(originalSceneOrder, usedSourceNames);
+            if (!templateSceneName) {
+              throw new Error("Not enough lot template scenes in template.json.");
+            }
+          } else if (normalizeSceneName(targetName).startsWith("Option Lot Interlude")) {
+            templateSceneName = optionInterludeName;
+          } else {
+            throw new Error("Could not find template scene: " + targetName);
+          }
+        }
+
+        const normalizedTemplateName = normalizeSceneName(templateSceneName);
+
+        if (isLotScene(targetName)) {
+          usedSourceNames.add(normalizedTemplateName);
+        }
+
+        newSceneOrder.push({ name: targetName });
+
+        const sourceTemplate = sceneMap.get(normalizedTemplateName);
+        if (sourceTemplate) {
+          const clonedSource = deepClone(sourceTemplate);
+          clonedSource.name = targetName;
+          newSources.push(clonedSource);
+        }
+      }
+
+      const output = deepClone(templateData);
+      output.scene_order = newSceneOrder;
+
+      const preservedNonSceneSources = (templateData.sources || []).filter(
+        s => s.id !== "scene"
+      );
+
+      output.sources = [...newSources, ...deepClone(preservedNonSceneSources)];
+      output.current_scene = "STOPPPPP";
+      output.current_program_scene = "End Scene";
+
+      return output;
+    }
+
+    function findAnyAvailableLotTemplate(sceneNames, usedSourceNames) {
+      for (const name of sceneNames) {
+        const cleaned = normalizeSceneName(name);
+        if (isLotScene(cleaned) && !usedSourceNames.has(cleaned)) {
+          return name;
+        }
+      }
+      return null;
     }
 
     function downloadJSON(data, filename) {
