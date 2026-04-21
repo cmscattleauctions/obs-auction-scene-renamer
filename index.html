@@ -111,7 +111,7 @@
           "Lot rows read: " + parsed.stats.lotHeader + "\n" +
           "Breed markers: " + parsed.stats.breedMarkers + "\n" +
           "Rejected as zero/junk: " + parsed.stats.rejected + "\n" +
-          "Quoted multi-line cells are now handled correctly."
+          "Interludes touching breed transitions are removed."
         );
       } catch (error) {
         console.error(error);
@@ -397,6 +397,32 @@
       return groups;
     }
 
+    function isBreedTransitionScene(name) {
+      return [
+        "Charloais Transition",
+        "Native Transition",
+        "Hosltein Transition"
+      ].includes(name);
+    }
+
+    function isOptionInterludeScene(name) {
+      return normalizeSceneName(name).startsWith("Option Lot Interlude");
+    }
+
+    function removeInterludesTouchingBreedTransitions(sceneNames) {
+      return sceneNames.filter((name, index, arr) => {
+        if (!isOptionInterludeScene(name)) return true;
+
+        const prev = index > 0 ? arr[index - 1] : null;
+        const next = index < arr.length - 1 ? arr[index + 1] : null;
+
+        if (prev && isBreedTransitionScene(prev)) return false;
+        if (next && isBreedTransitionScene(next)) return false;
+
+        return true;
+      });
+    }
+
     function buildFromTemplate(templateData, tokens) {
       const sourceMap = getSourceMap(templateData);
       const originalSceneNames = (templateData.scene_order || []).map(s => s.name);
@@ -481,13 +507,13 @@
         }
       }
 
-      const finalCompressed = [];
+      let finalCompressed = [];
       for (let i = 0; i < finalSceneNames.length; i++) {
         const current = finalSceneNames[i];
         const prev = finalCompressed[finalCompressed.length - 1];
 
-        const currentIsInterlude = normalizeSceneName(current).startsWith("Option Lot Interlude");
-        const prevIsInterlude = prev && normalizeSceneName(prev).startsWith("Option Lot Interlude");
+        const currentIsInterlude = isOptionInterludeScene(current);
+        const prevIsInterlude = prev && isOptionInterludeScene(prev);
 
         if (currentIsInterlude && prevIsInterlude) {
           continue;
@@ -495,6 +521,8 @@
 
         finalCompressed.push(current);
       }
+
+      finalCompressed = removeInterludesTouchingBreedTransitions(finalCompressed);
 
       finalCompressed.push(...fixedEndScenes);
 
