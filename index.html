@@ -219,18 +219,31 @@
       return JSON.parse(JSON.stringify(obj));
     }
 
+    function getLotBase(lot) {
+      const cleaned = String(lot).trim().toUpperCase();
+      const match = cleaned.match(/^(\d+)-[A-Z]$/);
+      if (match) {
+        return match[1];
+      }
+      return cleaned;
+    }
+
     function groupRows(rows) {
       const groups = [];
       let currentGroup = [];
 
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
+        const currentBase = getLotBase(row.lot);
+
         if (!currentGroup.length) {
           currentGroup.push(row);
           continue;
         }
 
-        if (currentGroup[currentGroup.length - 1].lot === row.lot) {
+        const previousBase = getLotBase(currentGroup[currentGroup.length - 1].lot);
+
+        if (currentBase === previousBase) {
           currentGroup.push(row);
         } else {
           groups.push(currentGroup);
@@ -238,7 +251,10 @@
         }
       }
 
-      if (currentGroup.length) groups.push(currentGroup);
+      if (currentGroup.length) {
+        groups.push(currentGroup);
+      }
+
       return groups;
     }
 
@@ -271,7 +287,10 @@
         "I AM SERIOUS"
       ];
 
-      const optionInterludeName = originalSceneOrder.find(name => normalizeSceneName(name).startsWith("Option Lot Interlude"));
+      const optionInterludeName = originalSceneOrder.find(name =>
+        normalizeSceneName(name).startsWith("Option Lot Interlude")
+      );
+
       if (!optionInterludeName) {
         throw new Error("Could not find an Option Lot Interlude scene in template.json.");
       }
@@ -298,7 +317,9 @@
           lastBreedTransition = breedTransition;
         }
 
-        const isOptionGroup = group.length > 1 || /-\w$/i.test(firstRow.lot);
+        const isOptionGroup =
+          group.length > 1 &&
+          group.every(row => /^\d+-[A-Z]$/i.test(row.lot));
 
         if (isOptionGroup) {
           auctionBody.push(optionInterludeName);
