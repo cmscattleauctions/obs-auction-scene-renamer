@@ -1,0 +1,200 @@
+function processFiles() {
+    const obsFile = document.getElementById("obsFile").files[0];
+    const csvFile = document.getElementById("csvFile").files[0];
+
+    if (!obsFile || !csvFile) {
+        alert("Please upload both files.");
+        return;
+    }
+
+    const obsReader = new FileReader();
+    const csvReader = new FileReader();
+
+    obsReader.onload = function (obsEvent) {
+        csvReader.onload = function (csvEvent) {
+            try {
+                const obsData = JSON.parse(obsEvent.target.result);
+                const csvText = csvEvent.target.result;
+
+                const rows = parseCSV(csvText);
+                const lotNames = buildLotNames(rows);
+
+                if (!lotNames.length) {
+                    alert("No lot names were found in the CSV.");
+                    return;
+                }
+
+                const renameMap = new Map();
+                let lotIndex = 0;
+                let unusedIndex = 1;
+
+                for (const scene of obsData.scene_order) {
+                    if (isLotScene(scene.name)) {
+                        const oldName = scene.name;
+                        let newName = "";
+
+                        if (lotIndex < lotNames.length) {
+                            const base = lotNames[lotIndex];
+
+                            if (oldName.includes("Transition")) {
+                                newName = `${base} Transition`;
+                            } else if (oldName.includes("Video")) {
+                                newName = `${base} Video`;
+                                lotIndex++;
+                            }
+                        } else {
+                            const padded = String(unusedIndex).padStart(3, "0");
+
+                            if (oldName.includes("Transition")) {
+                                newName = `UNUSED ${padded} Transition`;
+                            } else if (oldName.includes("Video")) {
+                                newName = `UNUSED ${padded} Video`;
+                                unusedIndex++;
+                            }
+                        }
+
+                        scene.name = newName;
+                        renameMap.set(oldName, newName);
+                    }
+                }
+
+                if (Array.isArray(obsData.sources)) {
+                    for (const source of obsData.sources) {
+                        if (renameMap.has(source.name)) {
+                            source.name = renameMap.get(source.name);
+                        }
+                    }
+                }
+
+                if (typeof obsData.current_scene === "string" && renameMap.has(obsData.current_scene)) {
+                    obsData.current_scene = renameMap.get(obsData.current_scene);
+                }
+
+                if (typeof obsData.current_program_scene === "string" && renameMap.has(obsData.current_program_scene)) {
+                    obsData.current_program_scene = renameMap.get(obsData.current_program_scene);
+                }
+
+                downloadJSON(obsData, "updated_scene_collection.json");
+            } catch (error) {
+                console.error(error);
+                alert("Something went wrong. Open the browser console and send me the error if it still fails.");
+            }
+        };
+
+        csvReader.readAsText(csvFile);
+    };
+
+    obsReader.readAsText(obsFile);
+}
+
+function parseCSV(text) {
+    const lines = text
+        .split(/\r?\n/)
+        .filter(line => line.trim() !== "");
+
+    if (!lines.length) return [];
+
+    const headers = splitCSVLine(lines[0]).map(h => h.trim().replace(/^"|"$/g, ""));
+    const lotIndex = headers.findIndex(h => h.toLowerCase() === "lot number");
+    const optionIndex = headers.findIndex(h => h.toLowerCase() === "option");
+
+    if (lotIndex === -1) {
+        throw new Error('Could not find "Lot Number" column in CSV.');
+    }
+
+    const rows = [];
+
+    for (let i = 1; i < lines.length; i++) {
+        const cols = splitCSVLine(lines[i]);
+
+        const lot = (cols[lotIndex] || "").trim().replace(/^"|"$/g, "");
+        const option = optionIndex >= 0 ? (cols[optionIndex] || "").trim().replace(/^"|"$/g, "") : "";
+
+        if (!lot) continue;
+
+        rows.push({ lot, option });
+    }
+
+    return rows;
+}
+
+function splitCSVLine(line) {
+    const result = [];
+    let current = "";
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        const next = line[i + 1];
+
+        if (char === '"') {
+            if (inQuotes && next === '"') {
+                current += '"';
+                i++;
+            } else {
+                inQuotes = !inQuotes;
+            }
+        } else if (char === "," && !inQuotes) {
+            result.push(current);
+            current = "";
+        } else {
+            current += char;
+        }
+    }
+
+    result.push(current);
+    return result;
+}
+
+function buildLotNames(rows) {
+    const grouped = [];
+    let currentLot = null;
+    let currentGroup = [];
+
+    for (const row of rows) {
+        if (row.lot !== currentLot) {
+            if (currentGroup.length) grouped.push(currentGroup);
+            currentLot = row.lot;
+            currentGroup = [row];
+        } else {
+            currentGroup.push(row);
+        }
+    }
+
+    if (currentGroup.length) grouped.push(currentGroup);
+
+    const result = [];
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+    for (const group of grouped) {
+        const lot = group[0].lot;
+
+        if (group.length === 1) {
+            result.push(lot);
+        } else {
+            group.forEach((_, index) => {
+                result.push(`${lot}-${letters[index]}`);
+            });
+        }
+    }
+
+    return result;
+}
+
+function isLotScene(name) {
+    return /^[0-9]+(-[A-Z])? (Transition|Video)$/.test(name);
+}
+
+function downloadJSON(data, filename) {
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: "application/json"
+    });
+
+    const url = URL.createObjectURL(blob);
+    const link = document.getElementById("downloadLink");
+
+    link.href = url;
+    link.download = filename;
+    link.style.display = "inline-block";
+    link.innerText = "Download Updated OBS File";
+}
