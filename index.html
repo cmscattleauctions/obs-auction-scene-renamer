@@ -221,41 +221,54 @@
       return map;
     }
 
-    function getBreedInfo(typeValue) {
-      const t = String(typeValue || "").toLowerCase().trim();
+    function normalizeBreedType(typeValue) {
+      const raw = String(typeValue || "").toLowerCase().trim();
+      const t = raw.replace(/[^a-z0-9]+/g, " ");
 
-      if (t.includes("char")) {
-        return {
-          key: "charolais",
-          transition: "Charloais Transition"
-        };
+      if (
+        t.includes("charolais") ||
+        t.includes("charloais") ||
+        t.includes("char x") ||
+        t.includes("charolais x") ||
+        (t.includes("char") && t.includes("beef"))
+      ) {
+        return "charolais";
       }
 
-      if (t.includes("native")) {
-        return {
-          key: "native",
-          transition: "Native Transition"
-        };
+      if (
+        t.includes("holstein") ||
+        t.includes("holstien") ||
+        t.includes("hol x") ||
+        t.includes("holstein x")
+      ) {
+        return "holstein";
       }
 
-      if (t.includes("holstein") || t.includes("hol")) {
-        return {
-          key: "holstein",
-          transition: "Hosltein Transition"
-        };
+      if (
+        t.includes("native") ||
+        t.includes("natives")
+      ) {
+        return "native";
       }
 
-      if (t.includes("black")) {
-        return {
-          key: "black",
-          transition: null
-        };
+      if (
+        t.includes("black") ||
+        t.includes("black x") ||
+        t.includes("beef on dairy") ||
+        t.includes("beed on dairy") ||
+        t.includes("bxd")
+      ) {
+        return "black";
       }
 
-      return {
-        key: t,
-        transition: null
-      };
+      return raw;
+    }
+
+    function getBreedTransitionForKey(breedKey) {
+      if (breedKey === "charolais") return "Charloais Transition";
+      if (breedKey === "native") return "Native Transition";
+      if (breedKey === "holstein") return "Hosltein Transition";
+      return null;
     }
 
     function groupRows(rows) {
@@ -359,9 +372,8 @@
       let interludePtr = 0;
 
       for (const group of groups) {
-        const breedInfo = getBreedInfo(group.type);
-        const breedKey = breedInfo.key;
-        const breedTransition = breedInfo.transition;
+        const breedKey = normalizeBreedType(group.type);
+        const breedTransition = getBreedTransitionForKey(breedKey);
 
         if (breedKey !== currentBreedKey) {
           if (!firstBreedSection && breedTransition) {
